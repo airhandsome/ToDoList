@@ -148,17 +148,21 @@ func (d *Database) GetTaskStats(startDate, endDate time.Time) (*TaskStats, error
 
 	query := `
         SELECT 
-            COUNT(*) as total,
-            SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END) as completed,
-            SUM(CASE WHEN status = 'TODO' THEN 1 ELSE 0 END) as todo,
-            SUM(CASE WHEN status = 'DOING' THEN 1 ELSE 0 END) as doing,
-            SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END) as done,
-            SUM(CASE WHEN status = 'UNDO' THEN 1 ELSE 0 END) as cancelled
-        FROM tasks
-        WHERE created_at BETWEEN ? AND ?
+            COALESCE(COUNT(*), 0) as total,
+            COALESCE(SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END), 0) as completed,
+            COALESCE(SUM(CASE WHEN status = 'TODO' THEN 1 ELSE 0 END), 0) as todo,
+            COALESCE(SUM(CASE WHEN status = 'DOING' THEN 1 ELSE 0 END), 0) as doing,
+            COALESCE(SUM(CASE WHEN status = 'DONE' THEN 1 ELSE 0 END), 0) as done,
+            COALESCE(SUM(CASE WHEN status = 'UNDO' THEN 1 ELSE 0 END), 0) as cancelled
+        FROM (
+            SELECT status 
+            FROM tasks 
+            WHERE date BETWEEN date(?) AND date(?)
+            AND status IN ('TODO', 'DOING', 'DONE', 'UNDO')
+        ) t
     `
 
-	err := d.db.QueryRow(query, startDate, endDate).Scan(
+	err := d.db.QueryRow(query, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(
 		&stats.TotalTasks,
 		&stats.CompletedTasks,
 		&stats.TodoTasks,
@@ -166,6 +170,11 @@ func (d *Database) GetTaskStats(startDate, endDate time.Time) (*TaskStats, error
 		&stats.DoneTasks,
 		&stats.CancelledTasks,
 	)
+
+	// 如果没有数据，返回全零的统计结果
+	if err == sql.ErrNoRows {
+		return &TaskStats{}, nil
+	}
 
 	return stats, err
 }
@@ -261,5 +270,11 @@ func (d *Database) UpdateTask(task *models.Task) error {
 		"UPDATE tasks SET title = ?, status = ?, completed_at = ? WHERE id = ?",
 		task.Title, task.Status, task.CompletedAt, task.ID,
 	)
+	return err
+}
+
+// 添加删除任���的方法
+func (d *Database) DeleteTask(taskID int64) error {
+	_, err := d.db.Exec("DELETE FROM tasks WHERE id = ?", taskID)
 	return err
 }

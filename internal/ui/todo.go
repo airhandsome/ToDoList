@@ -59,14 +59,26 @@ func NewTodoItem(task *models.Task, parent *TodoList) *TodoItem {
 	title := canvas.NewText(task.Title, color.Black)
 	title.TextStyle = fyne.TextStyle{Italic: true}
 	title.Alignment = fyne.TextAlignCenter
-	title.Resize(fyne.NewSize(200, 0)) // 设置最小宽度以确保横向显示
+	title.Resize(fyne.NewSize(200, 0))
 
-	// 创建编辑和删除按钮
-	// 创建编辑和删除按钮
-	editBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), item.onEditClicked)
+	// 创建删除按钮，根据状态设置不同的行为
 	deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
-		item.parent.moveTask(item.task, StatusUndo)
+		if TaskStatus(item.task.Status) == StatusUndo {
+			// 如果是 Undo 状态，直接删除任务
+			if err := parent.db.DeleteTask(item.task.ID); err != nil {
+				fmt.Println("Error deleting task:", err)
+				return
+			}
+			// 从内存中移除任务
+			parent.removeTask(item.task)
+		} else {
+			// 其他状态移动到 Undo
+			parent.moveTask(item.task, StatusUndo)
+		}
 	})
+
+	// 创建编辑按钮
+	editBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), item.onEditClicked)
 
 	// 创建按钮容器
 	buttons := container.NewHBox(checkBtn, deleteBtn)
@@ -74,7 +86,7 @@ func NewTodoItem(task *models.Task, parent *TodoList) *TodoItem {
 	item.container = container.NewHBox(
 		container.NewHBox(buttons),
 		title,
-		layout.NewSpacer(), // 添加一个 Spacer 来将 editBtn 推向右侧
+		layout.NewSpacer(),
 		editBtn,
 	)
 	item.label = title
@@ -229,7 +241,7 @@ func NewTodoList(db *storage.Database) *TodoList {
 	// 设置界面
 	todo.setup()
 
-	// 最后加载数据并设置选中日期
+	// 最后加载数据并设���选中日期
 	if err := todo.loadTasksForDate(today); err != nil {
 		fmt.Println("Error loading tasks:", err)
 	}
@@ -402,7 +414,7 @@ func createColumnList(title string, bgColor color.Color, t *TodoList, status Tas
 	// 创建带背景色的容器
 	background := canvas.NewRectangle(bgColor)
 
-	// 返回三个值
+	// 返回���个值
 	return list, container.NewBorder(
 		header,
 		nil, nil, nil,
@@ -436,4 +448,19 @@ func (t *TodoList) refreshAllLists() {
 	t.doingList.countLabel.SetText(fmt.Sprintf("%d", len(t.getTasksByStatus(StatusDoing))))
 	t.doneList.countLabel.SetText(fmt.Sprintf("%d", len(t.getTasksByStatus(StatusDone))))
 	t.undoList.countLabel.SetText(fmt.Sprintf("%d", len(t.getTasksByStatus(StatusUndo))))
+}
+
+// 添加移除任务的方法
+func (t *TodoList) removeTask(task *models.Task) {
+	// 从内存中移除任务
+	if tasks, ok := t.tasks[t.currentDate]; ok {
+		for i, currentTask := range tasks {
+			if currentTask.ID == task.ID {
+				t.tasks[t.currentDate] = append(tasks[:i], tasks[i+1:]...)
+				break
+			}
+		}
+	}
+	// 刷新显示
+	t.refreshAllLists()
 }
