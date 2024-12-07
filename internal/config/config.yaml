@@ -1,0 +1,33 @@
+app:
+  name: "番茄钟 + 待办事项"
+  version: "1.0.0"
+  window_width: 800
+  window_height: 600
+
+pomodoro:
+  # 工作时长（分钟）
+  work_duration: 25m
+  # 短休息时长
+  short_break: 5m
+  # 长休息时长
+  long_break: 15m
+  # 多少个番茄钟后进行长休息
+  long_break_after: 4
+  # 是否自动开始休息
+  auto_start_break: false
+  # 是否自动开始下一个番茄钟
+  auto_start_pomodoro: false
+  # 是否开启提示音
+  notification_sound: true
+
+database:
+  # 数据库文件路径
+  path: "pomodoro.db"
+
+theme:
+  # 深色模式
+  dark_mode: false
+  # 字体大小
+  font_size: 14
+  # 界面语言
+  language: "zh-CN"

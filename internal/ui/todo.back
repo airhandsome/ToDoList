@@ -1,0 +1,367 @@
+package ui
+
+import (
+	"TodoList/internal/models"
+	"fmt"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
+	"image/color"
+	"sort"
+	"time"
+
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
+)
+
+type TaskStatus string
+
+const (
+	StatusTodo  TaskStatus = "TODO"
+	StatusDoing TaskStatus = "DOING"
+	StatusDone  TaskStatus = "DONE"
+	StatusUndo  TaskStatus = "UNDO"
+)
+
+// TodoItem 表示单个待办事项
+type TodoItem struct {
+	task      *models.Task
+	check     *widget.Check
+	label     *canvas.Text
+	editBtn   *widget.Button
+	parent    *TodoList
+	container *fyne.Container
+}
+
+// 创建新的待办事项
+func NewTodoItem(task *models.Task, parent *TodoList) *TodoItem {
+	item := &TodoItem{
+		task:   task,
+		parent: parent,
+	}
+
+	// 创建勾选按钮
+	checkBtn := widget.NewButtonWithIcon("", theme.ConfirmIcon(), func() {
+		currentStatus := TaskStatus(item.task.Status)
+		switch currentStatus {
+		case StatusTodo:
+			item.parent.moveTask(item.task, StatusDoing)
+		case StatusDoing:
+			item.parent.moveTask(item.task, StatusDone)
+		case StatusUndo:
+			item.parent.moveTask(item.task, StatusTodo)
+		}
+	})
+	checkBtn.Resize(fyne.NewSize(10, 10))
+
+	title := canvas.NewText(task.Title, color.Black)
+	title.TextStyle = fyne.TextStyle{Italic: true}
+	title.Alignment = fyne.TextAlignCenter
+	title.Resize(fyne.NewSize(200, 0)) // 设置最小宽度以确保横向显示
+
+	// 创建编辑和删除按钮
+	// 创建编辑和删除按钮
+	editBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), item.onEditClicked)
+	deleteBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+		item.parent.moveTask(item.task, StatusUndo)
+	})
+
+	// 创建按钮容器
+	buttons := container.NewHBox(checkBtn, deleteBtn)
+
+	item.container = container.NewHBox(
+		container.NewHBox(buttons),
+		title,
+		layout.NewSpacer(), // 添加一个 Spacer 来将 editBtn 推向右侧
+		editBtn,
+	)
+	item.label = title
+	return item
+}
+
+// 处理编辑按钮点击
+func (i *TodoItem) onEditClicked() {
+	dialog := widget.NewEntry()
+	dialog.MultiLine = true
+	dialog.SetText(i.task.Title)
+
+	w := fyne.CurrentApp().NewWindow("编辑任务")
+	w.SetContent(container.NewVBox(
+		dialog,
+		container.NewHBox(
+			widget.NewButton("取消", func() {
+				w.Close()
+			}),
+			widget.NewButton("保存", func() {
+				i.updateText(dialog.Text)
+				w.Close()
+			}),
+		),
+	))
+	w.Resize(fyne.NewSize(300, 200))
+	w.CenterOnScreen()
+	w.Show()
+}
+
+// 更新文本
+func (i *TodoItem) updateText(newText string) {
+	i.task.Title = newText
+	i.label.Text = newText
+	i.parent.refreshAllLists()
+}
+
+// TodoList 表示一个状态的任务列表
+type StatusList struct {
+	status     TaskStatus
+	items      []*TodoItem
+	list       *widget.List
+	parent     *TodoList
+	countLabel *widget.Label
+}
+
+func NewStatusList(status TaskStatus, parent *TodoList) *StatusList {
+	sl := &StatusList{
+		status: status,
+		parent: parent,
+		items:  make([]*TodoItem, 0),
+	}
+
+	sl.list = widget.NewList(
+		func() int {
+			return len(sl.items)
+		},
+		func() fyne.CanvasObject {
+			return NewTodoItem(&models.Task{}, parent).container
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			if id < len(sl.items) {
+				container := obj.(*fyne.Container)
+				container.Objects = sl.items[id].container.Objects
+			}
+		},
+	)
+
+	// 设置列表的最小尺寸，确保它能够占满整个高度
+	sl.list.Resize(fyne.NewSize(200, 600))
+
+	return sl
+}
+
+// 更新列表项
+func (sl *StatusList) updateItems(tasks []*models.Task) {
+	sl.items = make([]*TodoItem, len(tasks))
+	for i, task := range tasks {
+		sl.items[i] = NewTodoItem(task, sl.parent)
+	}
+	sl.list.Refresh()
+}
+
+// 修改 TodoList 结构
+type TodoList struct {
+	tasks       map[string][]*models.Task
+	currentDate string
+	dateSelect  *widget.Select
+	todoList    *StatusList
+	doingList   *StatusList
+	doneList    *StatusList
+	undoList    *StatusList
+	input       *widget.Entry
+	addBtn      *widget.Button
+	container   *fyne.Container
+}
+
+func NewTodoList() *TodoList {
+	todo := &TodoList{
+		tasks: make(map[string][]*models.Task),
+		input: widget.NewEntry(),
+	}
+
+	todo.currentDate = time.Now().Format("2006-01-02")
+	dates := []string{todo.currentDate}
+	todo.dateSelect = widget.NewSelect(dates, nil)
+
+	todo.todoList = NewStatusList(StatusTodo, todo)
+	todo.doingList = NewStatusList(StatusDoing, todo)
+	todo.doneList = NewStatusList(StatusDone, todo)
+	todo.undoList = NewStatusList(StatusUndo, todo)
+
+	todo.setup()
+
+	todo.dateSelect.OnChanged = todo.onDateSelected
+	todo.dateSelect.SetSelected(todo.currentDate)
+
+	return todo
+}
+
+// 修改刷新方法
+func (t *TodoList) refreshAllLists() {
+	t.todoList.list.Refresh()
+	t.doingList.list.Refresh()
+	t.doneList.list.Refresh()
+	t.undoList.list.Refresh()
+
+	// 更新所有数量显示
+	t.todoList.countLabel.SetText(fmt.Sprintf("%d", len(t.getTasksByStatus(StatusTodo))))
+	t.doingList.countLabel.SetText(fmt.Sprintf("%d", len(t.getTasksByStatus(StatusDoing))))
+	t.doneList.countLabel.SetText(fmt.Sprintf("%d", len(t.getTasksByStatus(StatusDone))))
+	t.undoList.countLabel.SetText(fmt.Sprintf("%d", len(t.getTasksByStatus(StatusUndo))))
+}
+
+// setup 方法中的列表布局
+func (t *TodoList) setup() {
+	// 创建标题
+	title := widget.NewLabelWithStyle("任务管理", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+
+	// 创建输入框和添加按钮
+	t.input = widget.NewEntry()
+	t.input.SetPlaceHolder("添加一个新的任务")
+	t.addBtn = widget.NewButtonWithIcon("", theme.ContentAddIcon(), t.addTask)
+
+	inputContainer := container.NewBorder(
+		nil, nil, nil, t.addBtn,
+		t.input,
+	)
+
+	// 创建四列布局
+	todoList, todoColumn, todoCount := createColumnList("Todo", color.NRGBA{R: 240, G: 248, B: 255, A: 255}, t, StatusTodo)
+	doingList, doingColumn, doingCount := createColumnList("Doing", color.NRGBA{R: 255, G: 250, B: 240, A: 255}, t, StatusDoing)
+	doneList, doneColumn, doneCount := createColumnList("Done", color.NRGBA{R: 240, G: 255, B: 240, A: 255}, t, StatusDone)
+	undoList, undoColumn, undoCount := createColumnList("Undo", color.NRGBA{R: 255, G: 240, B: 240, A: 255}, t, StatusUndo)
+
+	listsContainer := container.NewGridWithColumns(4,
+		todoColumn,
+		doingColumn,
+		doneColumn,
+		undoColumn,
+	)
+
+	// 使用 Border 局组织整体界面
+	t.container = container.NewBorder(
+		container.NewVBox(
+			title,
+			inputContainer,
+		),
+		nil, nil, nil,
+		listsContainer,
+	)
+
+	// 更新列表引用
+	t.todoList = &StatusList{
+		list:       todoList,
+		status:     StatusTodo,
+		parent:     t,
+		countLabel: todoCount,
+	}
+	t.doingList = &StatusList{
+		list:       doingList,
+		status:     StatusDoing,
+		parent:     t,
+		countLabel: doingCount,
+	}
+	t.doneList = &StatusList{
+		list:       doneList,
+		status:     StatusDone,
+		parent:     t,
+		countLabel: doneCount,
+	}
+	t.undoList = &StatusList{
+		list:       undoList,
+		status:     StatusUndo,
+		parent:     t,
+		countLabel: undoCount,
+	}
+}
+
+// 创建列表列
+func createColumnList(title string, bgColor color.Color, t *TodoList, status TaskStatus) (*widget.List, *fyne.Container, *widget.Label) {
+	countLabel := widget.NewLabel("0")
+
+	list := widget.NewList(
+		func() int {
+			tasks := t.getTasksByStatus(status)
+			countLabel.SetText(fmt.Sprintf("%d", len(tasks))) // 更新数量
+			return len(tasks)
+		},
+		func() fyne.CanvasObject {
+			return NewTodoItem(&models.Task{}, t).container
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			tasks := t.getTasksByStatus(status)
+			if id < len(tasks) {
+				item := NewTodoItem(tasks[id], t)
+				container := obj.(*fyne.Container)
+				container.Objects = item.container.Objects
+			}
+		},
+	)
+
+	// 创建标题和数量显示
+	titleLabel := widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	header := container.NewHBox(
+		titleLabel,
+		widget.NewLabel(" "), // 添加一个空格作为分隔
+		countLabel,
+	)
+
+	// 创建带背景色的容器
+	background := canvas.NewRectangle(bgColor)
+
+	// 返回三个值
+	return list, container.NewBorder(
+		header,
+		nil, nil, nil,
+		background,
+		list,
+	), countLabel
+}
+
+// 获取指定状态的任务
+func (t *TodoList) getTasksByStatus(status TaskStatus) []*models.Task {
+	var result []*models.Task
+	for _, task := range t.tasks[t.currentDate] {
+		if TaskStatus(task.Status) == status {
+			result = append(result, task)
+		}
+	}
+	return result
+}
+
+// 移动任务到新状态
+func (t *TodoList) moveTask(task *models.Task, newStatus TaskStatus) {
+	task.Status = models.TaskStatus(string(newStatus))
+	if newStatus == StatusDone {
+		now := time.Now()
+		task.CompletedAt = &now
+	}
+	t.refreshAllLists()
+}
+
+func (t *TodoList) addTask() {
+	if text := t.input.Text; text != "" {
+		task := &models.Task{
+			Title:     text,
+			Status:    models.TaskStatus(string(StatusTodo)),
+			CreatedAt: time.Now(),
+		}
+
+		if _, ok := t.tasks[t.currentDate]; !ok {
+			t.tasks[t.currentDate] = make([]*models.Task, 0)
+			dates := append(t.dateSelect.Options, t.currentDate)
+			sort.Strings(dates)
+			t.dateSelect.Options = dates
+		}
+
+		t.tasks[t.currentDate] = append(t.tasks[t.currentDate], task)
+		t.input.SetText("")
+		t.refreshAllLists()
+	}
+}
+
+func (t *TodoList) onDateSelected(date string) {
+	if date == "" {
+		return
+	}
+	t.currentDate = date
+	t.refreshAllLists()
+}
