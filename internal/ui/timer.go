@@ -2,13 +2,12 @@ package ui
 
 import (
 	"fmt"
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"github.com/faiface/beep/effects"
-	"strconv"
 	"time"
 
-	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/widget"
 	"github.com/faiface/beep"
@@ -32,19 +31,21 @@ type PomodoroTimer struct {
 
 	// UI 组件
 	container      *fyne.Container
+	nameLabel      *canvas.Text
 	timeLabel      *canvas.Text
 	startButton    *widget.Button
 	resetButton    *widget.Button
 	statusLabel    *canvas.Text
-	countLabel     *canvas.Text  // 显示完成的番茄钟数量
+	countLabel     *canvas.Text   // 显示完成的番茄钟数量
 	settingsButton *widget.Button // 设置按钮
 
 	// 新增字段
-	pomodoroCount           int            // 完成的番茄钟数量
-	pomodorosUntilLongBreak int            // 到长休息还需要的番茄钟数
-	name                    string         // 添加名称字段
-	SetDeleteCallback       func()         // 用于设置删除回调
-	onDelete                func()         // 删除回调函数
+	pomodoroCount           int    // 完成的番茄钟数量
+	pomodorosUntilLongBreak int    // 到长休息还需要的番茄钟数
+	name                    string // 添加名称字段
+	SetDeleteCallback       func() // 用于设置删除回调
+	onDelete                func() // 删除回调函数
+	onSave                  func()
 	deleteBtn               *widget.Button // 删除按钮
 }
 type SoundEffect int
@@ -133,9 +134,9 @@ var (
 	borderColor          = color.NRGBA{R: 200, G: 200, B: 200, A: 255} // 不透明边框
 	buttonPrimaryColor   = color.NRGBA{R: 255, G: 64, B: 129, A: 255}  // 粉红色
 	buttonSecondaryColor = color.NRGBA{R: 68, G: 138, B: 255, A: 255}  // 蓝色
-	textColor            = color.NRGBA{R: 40, G: 40, B: 40, A: 255}      // 深灰色文本
-	timeColor            = color.NRGBA{R: 25, G: 25, B: 25, A: 255}      // 更深的时间文本
-	countColor           = color.NRGBA{R: 80, G: 80, B: 80, A: 255}     // 较浅的计数文本
+	textColor            = color.NRGBA{R: 40, G: 40, B: 40, A: 255}    // 深灰色文本
+	timeColor            = color.NRGBA{R: 25, G: 25, B: 25, A: 255}    // 更深的时间文本
+	countColor           = color.NRGBA{R: 80, G: 80, B: 80, A: 255}    // 较浅的计数文本
 )
 
 // 定义背景图片路径
@@ -146,8 +147,9 @@ const (
 )
 
 // NewPomodoroTimer 创建一个新的番茄钟计时器
-func NewPomodoroTimer(workDuration, breakDuration, longBreakDuration time.Duration) *PomodoroTimer {
+func NewPomodoroTimer(name string, workDuration, breakDuration, longBreakDuration time.Duration) *PomodoroTimer {
 	p := &PomodoroTimer{
+		name:                    name,
 		workDuration:            workDuration,
 		breakDuration:           breakDuration,
 		longBreakDuration:       longBreakDuration,
@@ -172,7 +174,7 @@ func NewPomodoroTimer(workDuration, breakDuration, longBreakDuration time.Durati
 	p.timeLabel.TextSize = 32
 	p.timeLabel.Alignment = fyne.TextAlignCenter
 
-	p.statusLabel = canvas.NewText("工作时间", textColor)
+	p.statusLabel = canvas.NewText(name, textColor)
 	p.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
 	p.statusLabel.TextSize = 20
 	p.statusLabel.Alignment = fyne.TextAlignCenter
@@ -401,6 +403,9 @@ func (p *PomodoroTimer) showSettings() {
 	// 创建设置窗口
 	w := fyne.CurrentApp().NewWindow("番茄钟设置")
 
+	nameEntry := widget.NewEntry()
+	nameEntry.SetText(p.name)
+
 	workEntry := widget.NewEntry()
 	workEntry.SetText(fmt.Sprintf("%d", int(p.workDuration.Minutes())))
 
@@ -415,6 +420,7 @@ func (p *PomodoroTimer) showSettings() {
 
 	form := &widget.Form{
 		Items: []*widget.FormItem{
+			{Text: "名称", Widget: nameEntry},
 			{Text: "工作时长(分钟)", Widget: workEntry},
 			{Text: "休息时长(分钟)", Widget: breakEntry},
 			{Text: "长休息时长(分钟)", Widget: longBreakEntry},
@@ -422,10 +428,15 @@ func (p *PomodoroTimer) showSettings() {
 		},
 		OnSubmit: func() {
 			// 保存设置
+			p.name = nameEntry.Text
 			p.workDuration = time.Duration(mustParseInt(workEntry.Text)) * time.Minute
 			p.breakDuration = time.Duration(mustParseInt(breakEntry.Text)) * time.Minute
 			p.longBreakDuration = time.Duration(mustParseInt(longBreakEntry.Text)) * time.Minute
-			p.pomodorosUntilLongBreak = mustParseInt(pomodorosEntry.Text)
+			p.pomodorosUntilLongBreak = int(mustParseInt(pomodorosEntry.Text))
+			p.statusLabel.Text = p.name
+			p.statusLabel.Refresh()
+			p.onSave()
+			p.container.Refresh()
 			p.Reset()
 			w.Close()
 		},
@@ -434,15 +445,6 @@ func (p *PomodoroTimer) showSettings() {
 	w.SetContent(form)
 	w.Resize(fyne.NewSize(300, 200))
 	w.Show()
-}
-
-// 辅助函数
-func mustParseInt(s string) int {
-	i, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
-	}
-	return i
 }
 
 func (p *PomodoroTimer) playNotificationSound() {
@@ -459,4 +461,8 @@ func (p *PomodoroTimer) playNotificationSound() {
 // 添加设置删除回调的方法
 func (p *PomodoroTimer) SetOnDelete(callback func()) {
 	p.onDelete = callback
+}
+
+func (p *PomodoroTimer) SetOnSave(callback func()) {
+	p.onSave = callback
 }

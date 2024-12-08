@@ -3,6 +3,7 @@ package storage
 import (
 	"TodoList/internal/models"
 	"database/sql"
+	"fmt"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -78,7 +79,26 @@ func (d *Database) initTables() error {
             FOREIGN KEY(task_id) REFERENCES tasks(id)
         )
     `)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 创建番茄钟配置表
+	_, err = d.db.Exec(`
+        CREATE TABLE IF NOT EXISTS timer_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            work_duration INTEGER NOT NULL,
+            break_duration INTEGER NOT NULL,
+            long_break INTEGER NOT NULL,
+            date TEXT NOT NULL
+        )
+    `)
+	if err != nil {
+		fmt.Printf("Error creating timer_configs table: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 // 任务相关方法
@@ -273,8 +293,99 @@ func (d *Database) UpdateTask(task *models.Task) error {
 	return err
 }
 
-// 添加删除任���的方法
+// 添加删除任务的方法
 func (d *Database) DeleteTask(taskID int64) error {
 	_, err := d.db.Exec("DELETE FROM tasks WHERE id = ?", taskID)
+	return err
+}
+
+// 添加保存配置的方法
+func (d *Database) SaveTimerConfig(config *models.TimerConfig) error {
+	fmt.Printf("Saving timer config: %+v\n", config)
+
+	// 修复 SQL 语句，确保关键字之间有空格
+	result, err := d.db.Exec(`
+        INSERT INTO timer_configs 
+        (name, work_duration, break_duration, long_break, date)
+        VALUES (?, ?, ?, ?, ?)
+    `, config.Name, 
+       int64(config.WorkDuration.Seconds()), 
+       int64(config.BreakDuration.Seconds()), 
+       int64(config.LongBreak.Seconds()), 
+       config.Date.Format("2006-01-02"))
+
+    if err != nil {
+        fmt.Printf("Error saving timer config: %v\n", err)
+        return err
+    }
+
+    id, err := result.LastInsertId()
+    if err != nil {
+        return err
+    }
+    config.ID = id
+    return nil
+}
+
+// 添加获取指定日期配置的方法
+func (d *Database) GetTimerConfigsByDate(date time.Time) ([]*models.TimerConfig, error) {
+	rows, err := d.db.Query(`
+        SELECT id, name, work_duration, break_duration, long_break
+        FROM timer_configs
+        WHERE date = ?
+    `, date.Format("2006-01-02"))
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var configs []*models.TimerConfig
+	for rows.Next() {
+		var config models.TimerConfig
+		var workSeconds, breakSeconds, longBreakSeconds int64
+
+		err := rows.Scan(
+			&config.ID,
+			&config.Name,
+			&workSeconds,
+			&breakSeconds,
+			&longBreakSeconds,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		config.WorkDuration = time.Duration(workSeconds) * time.Second
+		config.BreakDuration = time.Duration(breakSeconds) * time.Second
+		config.LongBreak = time.Duration(longBreakSeconds) * time.Second
+		config.Date = date
+
+		configs = append(configs, &config)
+	}
+
+	return configs, nil
+}
+
+// 添加删除配置的方法
+func (d *Database) DeleteTimerConfig(name string, date time.Time) error {
+	_, err := d.db.Exec(`
+        DELETE FROM timer_configs 
+        WHERE name = ? AND date = ?
+    `, name, date.Format("2006-01-02"))
+	return err
+}
+
+// 添加更新配置的方法
+func (d *Database) UpdateTimerConfig(config *models.TimerConfig) error {
+	_, err := d.db.Exec(`
+        UPDATE timer_configs 
+        SET work_duration = ?, break_duration = ?, long_break = ?
+        WHERE name = ? AND date = ?
+    `, int64(config.WorkDuration.Seconds()),
+       int64(config.BreakDuration.Seconds()),
+       int64(config.LongBreak.Seconds()),
+       config.Name,
+       config.Date.Format("2006-01-02"))
 	return err
 }

@@ -25,7 +25,7 @@ func NewMainWindow(app fyne.App, configManager *config.Manager) *MainWindow {
 		window:        app.NewWindow("番茄钟 + 待办事项"),
 		configManager: configManager,
 		db:            db,
-		timerManager:  NewTimerManager(),
+		timerManager:  NewTimerManager(db),
 		todo:          NewTodoList(db),
 	}
 	w.setup()

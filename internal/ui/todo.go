@@ -324,7 +324,7 @@ func (t *TodoList) moveTask(task *models.Task, newStatus TaskStatus) {
 // setup 方法中的列表布局
 func (t *TodoList) setup() {
 	// 创建标题
-	title := widget.NewLabelWithStyle("Task Manager", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	title := widget.NewLabelWithStyle("任务管理器", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 
 	// 创建日期选择器
 	dateContainer := container.NewHBox(
