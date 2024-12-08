@@ -13,36 +13,85 @@ import (
 )
 
 type TimerManager struct {
-	container *fyne.Container
-	timers    []*PomodoroTimer
-	addButton *widget.Button
-	db        *storage.Database
+	container   *fyne.Container
+	timers     []*PomodoroTimer
+	addButton  *widget.Button
+	db         *storage.Database
+	dateSelect *widget.Select
+	currentDate time.Time
 }
 
 func NewTimerManager(db *storage.Database) *TimerManager {
 	tm := &TimerManager{
-		timers: make([]*PomodoroTimer, 0),
-		db:     db,
+		timers:      make([]*PomodoroTimer, 0),
+		db:          db,
+		currentDate: time.Now(),
 	}
 
 	tm.addButton = widget.NewButton("添加番茄钟", tm.showAddDialog)
 
-	// 使用网格布局来展示多个番茄钟
-	tm.container = container.NewVBox(
+	dates, err := tm.getAvailableDates()
+	if err != nil {
+		dates = []string{time.Now().Format("2006-01-02")}
+	}
+
+	tm.dateSelect = widget.NewSelect(dates, tm.onDateSelected)
+	tm.dateSelect.SetSelected(time.Now().Format("2006-01-02"))
+
+	toolbar := container.NewHBox(
+		widget.NewLabel("选择日期:"),
+		tm.dateSelect,
 		tm.addButton,
-		container.NewGridWithColumns(2), // 2列网格布局用于显示番茄钟
 	)
 
-	// 加载今天的配置
-	tm.loadTodayConfigs()
+	tm.container = container.NewVBox(
+		toolbar,
+		container.NewGridWithColumns(2),
+	)
+
+	tm.loadDateConfigs(tm.currentDate)
 
 	return tm
 }
 
-func (tm *TimerManager) loadTodayConfigs() {
-	configs, err := tm.db.GetTimerConfigsByDate(time.Now())
+func (tm *TimerManager) getAvailableDates() ([]string, error) {
+	dates, err := tm.db.GetDistinctDates()
 	if err != nil {
-		// 处理错误
+		return nil, err
+	}
+
+	today := time.Now().Format("2006-01-02")
+	hasToday := false
+	for _, date := range dates {
+		if date == today {
+			hasToday = true
+			break
+		}
+	}
+	if !hasToday {
+		dates = append([]string{today}, dates...)
+	}
+
+	return dates, nil
+}
+
+func (tm *TimerManager) onDateSelected(dateStr string) {
+	selectedDate, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		dialog.ShowError(err, fyne.CurrentApp().Driver().AllWindows()[0])
+		return
+	}
+
+	tm.currentDate = selectedDate
+	defer tm.loadDateConfigs(selectedDate)
+}
+
+func (tm *TimerManager) loadDateConfigs(date time.Time) {
+	tm.timers = make([]*PomodoroTimer, 0)
+
+	configs, err := tm.db.GetTimerConfigsByDate(date)
+	if err != nil {
+		dialog.ShowError(err, fyne.CurrentApp().Driver().AllWindows()[0])
 		return
 	}
 
@@ -52,17 +101,16 @@ func (tm *TimerManager) loadTodayConfigs() {
 			config.WorkDuration,
 			config.BreakDuration,
 			config.LongBreak,
+			tm.db,
 		)
+		currentTimer := timer
 		timer.SetOnDelete(func() {
-			tm.removeTimer(timer)
-			tm.db.DeleteTimerConfig(config.Name, config.Date)
-		})
-		timer.SetOnSave(func() {
-			tm.db.UpdateTimerConfig(config)
+			tm.removeTimer(currentTimer)
 		})
 		tm.timers = append(tm.timers, timer)
 	}
-	tm.updateLayout()
+
+	defer tm.updateLayout()
 }
 
 func (tm *TimerManager) saveTimerConfig(name string, work, break_, longBreak time.Duration) error {
@@ -71,12 +119,13 @@ func (tm *TimerManager) saveTimerConfig(name string, work, break_, longBreak tim
 		WorkDuration:  work,
 		BreakDuration: break_,
 		LongBreak:     longBreak,
-		Date:          time.Now(),
+		Date:          tm.currentDate,
 	}
 	return tm.db.SaveTimerConfig(config)
 }
 
 func (tm *TimerManager) showAddDialog() {
+	fmt.Println("Opening add dialog")
 	w := fyne.CurrentApp().NewWindow("添加番茄钟")
 
 	nameEntry := widget.NewEntry()
@@ -101,17 +150,14 @@ func (tm *TimerManager) showAddDialog() {
 		OnSubmit: func() {
 			fmt.Println("Form submitted")
 
-			// 添加输入验证
 			if nameEntry.Text == "" {
 				dialog.ShowError(fmt.Errorf("请输入番茄钟名称"), w)
 				return
 			}
 
-			// 打印所有输入值
 			fmt.Printf("Input values - Name: %s, Work: %s, Break: %s, LongBreak: %s\n",
 				nameEntry.Text, workEntry.Text, breakEntry.Text, longBreakEntry.Text)
 
-			// 检查 TimerManager 的数据库连接
 			if tm.db == nil {
 				fmt.Println("ERROR: Database connection is nil")
 				dialog.ShowError(fmt.Errorf("数据库连接失败"), w)
@@ -125,45 +171,43 @@ func (tm *TimerManager) showAddDialog() {
 			fmt.Printf("Parsed durations - Work: %v, Break:%v, LongBreak: %v\n",
 				workDuration, breakDuration, longBreakDuration)
 
-			// 保存配置到数据库
-			err := tm.saveTimerConfig(
-				nameEntry.Text,
-				workDuration,
-				breakDuration,
-				longBreakDuration,
-			)
+			config := &models.TimerConfig{
+				Name:          nameEntry.Text,
+				WorkDuration:  workDuration,
+				BreakDuration: breakDuration,
+				LongBreak:     longBreakDuration,
+				Date:          tm.currentDate,
+			}
+
+			err := tm.db.SaveTimerConfig(config)
 			if err != nil {
-				fmt.Printf("Error saving timer config: %v\n", err)
-				dialog.ShowError(fmt.Errorf("保存配置失败:%v", err), w)
+				dialog.ShowError(fmt.Errorf("保存配置失败: %v", err), w)
 				return
 			}
 
+			fmt.Println("Creating new timer")
 			timer := NewPomodoroTimer(
 				nameEntry.Text,
 				workDuration,
 				breakDuration,
 				longBreakDuration,
+				tm.db,
 			)
 
 			timer.SetOnDelete(func() {
 				tm.removeTimer(timer)
 			})
-			timer.SetOnSave(func() {
-				tm.db.UpdateTimerConfig(&models.TimerConfig{
-					Name:          nameEntry.Text,
-					WorkDuration:  workDuration,
-					BreakDuration: breakDuration,
-					LongBreak:     longBreakDuration,
-					Date:          time.Now(),
-				})
-			})
+
 			tm.timers = append(tm.timers, timer)
 			tm.updateLayout()
 
-			// 刷新整个容器
 			tm.container.Refresh()
 
 			w.Close()
+
+			dates, _ := tm.getAvailableDates()
+			tm.dateSelect.Options = dates
+			tm.dateSelect.Refresh()
 		},
 	}
 
@@ -173,10 +217,12 @@ func (tm *TimerManager) showAddDialog() {
 }
 
 func (tm *TimerManager) removeTimer(timer *PomodoroTimer) {
-	// 停止计时器
-	timer.Stop()
+	err := tm.db.DeleteTimerConfig(timer.name, tm.currentDate)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("删除配置失败: %v", err), fyne.CurrentApp().Driver().AllWindows()[0])
+		return
+	}
 
-	// 从切片中移除
 	for i, t := range tm.timers {
 		if t == timer {
 			tm.timers = append(tm.timers[:i], tm.timers[i+1:]...)
@@ -185,26 +231,36 @@ func (tm *TimerManager) removeTimer(timer *PomodoroTimer) {
 	}
 
 	tm.updateLayout()
+
+	dates, _ := tm.getAvailableDates()
+	tm.dateSelect.Options = dates
+	tm.dateSelect.Refresh()
 }
 
 func (tm *TimerManager) updateLayout() {
-	// 清除现有的网格布局
-	grid := container.NewGridWithColumns(2)
-
-	// 重新添加所有计时器
-	for _, timer := range tm.timers {
-		grid.Add(timer.container)
+	if tm.container == nil {
+		return
 	}
 
-	// 更新容器
+	if len(tm.container.Objects) < 2 {
+		return
+	}
+
+	grid := container.NewGridWithColumns(2)
+
+	for _, timer := range tm.timers {
+		if timer != nil && timer.container != nil {
+			grid.Add(timer.container)
+		}
+	}
+
 	tm.container.Objects[1] = grid
 
-	// 刷新整个容器
 	tm.container.Refresh()
 }
 
-// 添加安全的整数解析函数
 func mustParseInt(s string) int64 {
+	fmt.Printf("Parsing string: %s\n", s)
 	i, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
 		fmt.Printf("Error parsing int: %v\n", err)

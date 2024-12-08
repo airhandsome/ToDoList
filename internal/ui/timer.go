@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"TodoList/internal/storage"
 	"fmt"
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -46,7 +47,8 @@ type PomodoroTimer struct {
 	SetDeleteCallback       func() // 用于设置删除回调
 	onDelete                func() // 删除回调函数
 	onSave                  func()
-	deleteBtn               *widget.Button // 删除按钮
+	deleteBtn               *widget.Button    // 删除按钮
+	db                      *storage.Database // 添加数据库字段
 }
 type SoundEffect int
 
@@ -147,7 +149,7 @@ const (
 )
 
 // NewPomodoroTimer 创建一个新的番茄钟计时器
-func NewPomodoroTimer(name string, workDuration, breakDuration, longBreakDuration time.Duration) *PomodoroTimer {
+func NewPomodoroTimer(name string, workDuration, breakDuration, longBreakDuration time.Duration, db *storage.Database) *PomodoroTimer {
 	p := &PomodoroTimer{
 		name:                    name,
 		workDuration:            workDuration,
@@ -156,6 +158,7 @@ func NewPomodoroTimer(name string, workDuration, breakDuration, longBreakDuratio
 		isWorking:               true,
 		remainingTime:           workDuration,
 		pomodorosUntilLongBreak: 4,
+		db:                      db,
 	}
 
 	// 创建背景图片
@@ -192,7 +195,7 @@ func NewPomodoroTimer(name string, workDuration, breakDuration, longBreakDuratio
 	p.deleteBtn.Importance = widget.HighImportance
 
 	// 创建主要控制按钮并设置样式
-	p.startButton = widget.NewButtonWithIcon("开始", theme.MediaPlayIcon(), func() {
+	p.startButton = widget.NewButtonWithIcon("��始", theme.MediaPlayIcon(), func() {
 		if p.isRunning {
 			p.Stop()
 			p.startButton.SetIcon(theme.MediaPlayIcon())
@@ -238,7 +241,7 @@ func NewPomodoroTimer(name string, workDuration, breakDuration, longBreakDuratio
 	// 创建主容器，注意层次顺序
 	p.container = container.NewMax(
 		background, // 最底层：背景图片
-		overlay,    // 中间层：半透明遮罩
+		overlay,    // 中间层：��透明遮罩
 		//border,        // 上层：边框
 		paddedContent, // 最上层：内容
 	)

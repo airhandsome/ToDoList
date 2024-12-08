@@ -191,7 +191,7 @@ func (d *Database) GetTaskStats(startDate, endDate time.Time) (*TaskStats, error
 		&stats.CancelledTasks,
 	)
 
-	// 如果没有数据，返回全零的统计结果
+	// 如果没有数据，返回全零的���计结果
 	if err == sql.ErrNoRows {
 		return &TaskStats{}, nil
 	}
@@ -228,13 +228,17 @@ func (d *Database) GetPomodoroStats(startDate, endDate time.Time) (*PomodoroStat
 }
 
 func (d *Database) GetDistinctDates() ([]string, error) {
-	var dates []string
-	rows, err := d.db.Query("SELECT DISTINCT date FROM tasks ORDER BY date DESC")
+	rows, err := d.db.Query(`
+        SELECT DISTINCT date 
+        FROM timer_configs 
+        ORDER BY date DESC
+    `)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	var dates []string
 	for rows.Next() {
 		var date string
 		if err := rows.Scan(&date); err != nil {
